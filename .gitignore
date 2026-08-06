@@ -1,0 +1,14 @@
+# PlatformIO build products and IDE state
+**/.pio/
+**/.vscode/
+.pio-core/
+.tooling/
+build/
+*.o
+*.s
+pip-*/
+
+# Locally captured device logs
+*.BNOLOG
+*.BLOG
+*.BIN

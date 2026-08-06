@@ -1,0 +1,273 @@
+name: Firmware CI and Web Installer
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "communication/**"
+      - "control/**"
+      - "tests/**"
+      - "web/**"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "communication/**"
+      - "control/**"
+      - "tests/**"
+      - "web/**"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boat-firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Controller tests
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror
+          -Icontrol/lib/production_control/src
+          tests/controller_test.cpp
+          control/lib/production_control/src/production_control.cpp
+          control/lib/production_control/src/competition_actuators.cpp
+          -o controller_test && ./controller_test
+
+      - name: Program-start attitude reference tests
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror
+          -Itests/stubs
+          -Icontrol/include
+          -Icontrol/lib/boat_protocol/src
+          tests/control_state_test.cpp
+          control/src/control_state.cpp
+          -o control_state_test && ./control_state_test
+
+      - name: Protocol and command tests
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror
+          -Icontrol/lib/production_control/src
+          -Icontrol/lib/boat_protocol/src
+          tests/protocol_test.cpp
+          control/lib/production_control/src/production_control.cpp
+          control/lib/production_control/src/command_ingress.cpp
+          control/lib/production_control/src/command_replay.cpp
+          control/lib/boat_protocol/src/boat_protocol.cpp
+          -o protocol_test && ./protocol_test
+
+      - name: Communication XIAO GNSS receiver tests
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror
+          -Itests/stubs
+          -Icommunication/include
+          tests/gnss_receiver_test.cpp
+          communication/src/gnss_receiver.cpp
+          -o gnss_receiver_test && ./gnss_receiver_test
+
+      - name: Communication XIAO host syntax and format checks
+        run: >-
+          g++ -std=c++17 -Wall -Wextra -Werror -DARDUINO
+          -Itests/stubs
+          -Icommunication/include
+          -Icommunication/lib/boat_protocol/src
+          -fsyntax-only
+          communication/src/main.cpp
+          communication/src/gnss_receiver.cpp
+
+      - name: Protocol copies match
+        run: |
+          cmp control/lib/boat_protocol/src/boat_protocol.h communication/lib/boat_protocol/src/boat_protocol.h
+          cmp control/lib/boat_protocol/src/boat_protocol.cpp communication/lib/boat_protocol/src/boat_protocol.cpp
+
+      - name: Communication XIAO Web JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path("communication/include/production_page_ja.h").read_text()
+          script = source.split("<script>", 1)[1].split("</script>", 1)[0]
+          Path("production_page.js").write_text(script)
+          PY
+          node --check production_page.js
+
+  firmware:
+    needs: host-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install PlatformIO
+        run: python -m pip install --disable-pip-version-check platformio==6.1.19
+
+      - name: Build XIAO control firmware
+        run: pio run -d control --environment production
+
+      - name: Build XIAO communication firmware
+        run: pio run -d communication --environment production
+
+      - name: Prepare merged firmware and Web Installer
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          CONTROL_BUILD="control/.pio/build/production"
+          COMMUNICATION_BUILD="communication/.pio/build/production"
+          ESPTOOL="$(find "${HOME}/.platformio/packages/tool-esptoolpy" -maxdepth 3 -type f -name esptool.py -print -quit)"
+          BOOT_APP0="$(find "${HOME}/.platformio/packages/framework-arduinoespressif32/tools/partitions" -type f -name boot_app0.bin -print -quit)"
+
+          for build_dir in "${CONTROL_BUILD}" "${COMMUNICATION_BUILD}"; do
+            test -s "${build_dir}/bootloader.bin"
+            test -s "${build_dir}/partitions.bin"
+            test -s "${build_dir}/firmware.bin"
+          done
+          test -n "${ESPTOOL}"
+          test -s "${BOOT_APP0}"
+
+          rm -rf site
+          mkdir -p site/firmware
+          cp -a web/. site/
+
+          python "${ESPTOOL}" --chip esp32s3 merge_bin \
+            -o site/firmware/boat-control-xiao-esp32s3.bin \
+            --flash_mode qio \
+            --flash_freq 80m \
+            --flash_size 8MB \
+            0x0 "${CONTROL_BUILD}/bootloader.bin" \
+            0x8000 "${CONTROL_BUILD}/partitions.bin" \
+            0xe000 "${BOOT_APP0}" \
+            0x10000 "${CONTROL_BUILD}/firmware.bin"
+
+          python "${ESPTOOL}" --chip esp32s3 merge_bin \
+            -o site/firmware/boat-communication-xiao-esp32s3.bin \
+            --flash_mode qio \
+            --flash_freq 80m \
+            --flash_size 8MB \
+            0x0 "${COMMUNICATION_BUILD}/bootloader.bin" \
+            0x8000 "${COMMUNICATION_BUILD}/partitions.bin" \
+            0xe000 "${BOOT_APP0}" \
+            0x10000 "${COMMUNICATION_BUILD}/firmware.bin"
+
+          test -s site/firmware/boat-control-xiao-esp32s3.bin
+          test -s site/firmware/boat-communication-xiao-esp32s3.bin
+
+          (
+            cd site
+            sha256sum firmware/boat-control-xiao-esp32s3.bin > firmware/boat-control-xiao-esp32s3.bin.sha256
+            sha256sum firmware/boat-communication-xiao-esp32s3.bin > firmware/boat-communication-xiao-esp32s3.bin.sha256
+          )
+
+          VERSION="${GITHUB_SHA::7}"
+          cat > site/manifest-control.json <<EOF
+          {
+            "name": "Boat Control - XIAO ESP32S3",
+            "version": "${VERSION}",
+            "new_install_prompt_erase": true,
+            "new_install_improv_wait_time": 0,
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  {
+                    "path": "firmware/boat-control-xiao-esp32s3.bin",
+                    "offset": 0
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          cat > site/manifest-communication.json <<EOF
+          {
+            "name": "Boat Communication - XIAO ESP32S3",
+            "version": "${VERSION}",
+            "new_install_prompt_erase": true,
+            "new_install_improv_wait_time": 0,
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  {
+                    "path": "firmware/boat-communication-xiao-esp32s3.bin",
+                    "offset": 0
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          cat > site/build-info.json <<EOF
+          {
+            "repository": "${GITHUB_REPOSITORY}",
+            "commit": "${GITHUB_SHA}",
+            "shortCommit": "${VERSION}",
+            "runNumber": "${GITHUB_RUN_NUMBER}",
+            "runId": "${GITHUB_RUN_ID}"
+          }
+          EOF
+
+          python -m json.tool site/manifest-control.json >/dev/null
+          python -m json.tool site/manifest-communication.json >/dev/null
+          python -m json.tool site/build-info.json >/dev/null
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boat-firmware-${{ github.run_number }}
+          path: |
+            site/firmware/
+            site/manifest-control.json
+            site/manifest-communication.json
+            site/build-info.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Configure Pages
+        if: github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: firmware
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy Web Installer
+        id: deployment
+        uses: actions/deploy-pages@v4

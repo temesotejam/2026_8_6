@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>水上翼船ファームウェア Web Installer</title>
+  <meta name="description" content="2台のXIAO ESP32S3へ水上翼船ファームウェアを書き込むWebインストーラー">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <span class="badge">XIAO ESP32S3 × 2</span>
+      <h1>水上翼船<br>Firmware Installer</h1>
+      <p class="lead">開発環境を入れずに、PC版ChromeまたはEdgeから通信側・制御側ファームウェアをコンパイル済みの状態で書き込めます。</p>
+      <p id="build-version" class="build-version">ビルド情報を確認中…</p>
+    </header>
+
+    <section class="card danger">
+      <h2>書き込み前の安全確認</h2>
+      <ul>
+        <li>モータ用バッテリーとサーボ外部電源を切ってください。</li>
+        <li>2台を同時接続せず、書き込む基板だけをUSB接続してください。</li>
+        <li><strong>COM3は選択しないでください。</strong></li>
+        <li>書き込みにより、その基板に現在入っているファームウェアは置き換わります。</li>
+      </ul>
+    </section>
+
+    <section class="install-grid" aria-label="ファームウェア選択">
+      <article class="card installer control-card">
+        <div class="card-heading">
+          <span class="node-label">CONTROL NODE</span>
+          <h2>制御側 XIAO ESP32S3</h2>
+        </div>
+        <p>BNO08X、ToF、INA226、PCA9685、VESCと自動制御を担当する制御側です。回転数はVESCのERPMを使用し、AS5600は使用しません。D10はモータ安全リレーで、非ゼロDuty指令中のみHIGHになります。</p>
+        <dl>
+          <div><dt>基板</dt><dd>Seeed Studio XIAO ESP32S3</dd></div>
+          <div><dt>通常のポート</dt><dd>COM4</dd></div>
+          <div><dt>Flash</dt><dd>8 MB</dd></div>
+        </dl>
+        <esp-web-install-button manifest="./manifest-control.json">
+          <button slot="activate" class="install-button control-button">XIAOへ書き込む</button>
+          <p slot="unsupported" class="unsupported">Web Serial非対応です。PC版ChromeまたはEdgeで開いてください。</p>
+          <p slot="not-allowed" class="unsupported">HTTPSの公開ページから開いてください。</p>
+        </esp-web-install-button>
+        <div class="downloads">
+          <a href="./firmware/boat-control-xiao-esp32s3.bin" download>BINを保存</a>
+          <a href="./firmware/boat-control-xiao-esp32s3.bin.sha256" download>SHA-256</a>
+        </div>
+      </article>
+
+      <article class="card installer communication-card">
+        <div class="card-heading">
+          <span class="node-label">COMMUNICATION NODE</span>
+          <h2>通信側 XIAO ESP32S3</h2>
+        </div>
+        <p>GNSS、固定ウェイポイント選択、統合Web操作画面、制御側とのUART通信を担当します。外付けmicroSDの認識確認に対応し、ログ記録はまだ無効です。</p>
+        <dl>
+          <div><dt>基板</dt><dd>Seeed Studio XIAO ESP32S3</dd></div>
+          <div><dt>通常のポート</dt><dd>COM6</dd></div>
+          <div><dt>Flash</dt><dd>8 MB</dd></div>
+        </dl>
+        <esp-web-install-button manifest="./manifest-communication.json">
+          <button slot="activate" class="install-button communication-button">通信側XIAOへ書き込む</button>
+          <p slot="unsupported" class="unsupported">Web Serial非対応です。PC版ChromeまたはEdgeで開いてください。</p>
+          <p slot="not-allowed" class="unsupported">HTTPSの公開ページから開いてください。</p>
+        </esp-web-install-button>
+        <div class="downloads">
+          <a href="./firmware/boat-communication-xiao-esp32s3.bin" download>BINを保存</a>
+          <a href="./firmware/boat-communication-xiao-esp32s3.bin.sha256" download>SHA-256</a>
+        </div>
+      </article>
+    </section>
+
+    <section class="card steps">
+      <h2>書き込み手順</h2>
+      <ol>
+        <li>上の安全確認を行い、対象基板だけをデータ通信対応USBケーブルで接続します。</li>
+        <li>対象基板の「書き込む」ボタンを押します。</li>
+        <li>表示された一覧から対象基板のシリアルポートを選びます。</li>
+        <li>Installを実行し、完了表示が出るまでUSBを抜かないでください。</li>
+        <li>もう一方へ書く場合は、完了後にUSBを差し替えて同じ手順を行います。</li>
+      </ol>
+      <p class="note">ポートが出ない場合はUSBケーブル、USBドライバ、他のシリアルモニタがポートを使用していないかを確認してください。</p>
+    </section>
+
+    <section class="card after-write">
+      <h2>書き込み後</h2>
+      <p>両方とも起動時はDISARMEDです。通信側XIAOのUSBシリアルまたはWeb画面で、GNSS・microSD・制御側UARTリンクを確認してからアクチュエータ電源を入れてください。</p>
+      <div class="safety-tags">
+        <span>DISARMED起動</span>
+        <span>停止時PCA9685 Full OFF</span>
+        <span>VESC Duty 0</span>
+      </div>
+    </section>
+
+    <footer>
+      <a href="https://github.com/temesotejam/2026_8_6">ソースコードとビルド履歴</a>
+    </footer>
+  </main>
+
+  <script>
+    fetch('./build-info.json', { cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) throw new Error('build info unavailable');
+        return response.json();
+      })
+      .then((info) => {
+        const shortCommit = info.shortCommit || String(info.commit || '').slice(0, 7);
+        document.getElementById('build-version').textContent =
+          `公開ビルド: ${shortCommit} / Actions #${info.runNumber}`;
+      })
+      .catch(() => {
+        document.getElementById('build-version').textContent = '公開ビルド情報を取得できませんでした';
+      });
+  </script>
+</body>
+</html>
