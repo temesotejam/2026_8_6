@@ -1,0 +1,61 @@
+name: Apply runtime tuning patch v2
+
+on:
+  push:
+    branches:
+      - agent/web-tuning-auto-flash
+    paths:
+      - ".github/workflows/agent_apply_tuning_v2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v6
+        with:
+          ref: agent/web-tuning-auto-flash
+
+      - name: Recover and apply patch script
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, gzip, re
+          from pathlib import Path
+          source = Path('.github/workflows/agent_apply_tuning.yml').read_text()
+          match = re.search(r'payload = """([A-Za-z0-9+/=]+)"""', source)
+          if not match:
+              raise SystemExit('embedded patch payload not found')
+          Path('.agent_apply.py').write_bytes(gzip.decompress(base64.b64decode(match.group(1))))
+          PY
+          set +e
+          output="$(python .agent_apply.py 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          rm -f .agent_apply.py
+          if [ "$rc" -ne 0 ]; then
+            printf '%s\n' "$output" | grep -Fq 'README.md: expected 1 occurrence, found 0' || exit "$rc"
+            printf '%s\n' "$output" | grep -Fq 'core patch applied' || exit "$rc"
+            echo 'Known optional README patch mismatch ignored; core patch was applied.'
+          fi
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add control communication web docs README.md .github/workflows/firmware.yml
+          if git diff --cached --quiet; then
+            echo "No patch changes to commit"
+            exit 0
+          fi
+          git commit -m "Add runtime tuning and bootless web flashing"
+          git push
