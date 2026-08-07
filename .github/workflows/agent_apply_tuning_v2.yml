@@ -47,16 +47,20 @@ jobs:
             printf '%s\n' "$output" | grep -Fq 'core patch applied' || exit "$rc"
             echo 'Known optional README patch mismatch ignored; core patch was applied.'
           fi
+          echo '--- firmware workflow intended diff ---'
+          git diff -- .github/workflows/firmware.yml || true
+          echo '--- end firmware workflow intended diff ---'
+          git restore .github/workflows/firmware.yml
 
-      - name: Commit patch
+      - name: Commit core patch
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add control communication web docs README.md .github/workflows/firmware.yml
+          git add control communication web docs README.md
           if git diff --cached --quiet; then
-            echo "No patch changes to commit"
+            echo "No core patch changes to commit"
             exit 0
           fi
           git commit -m "Add runtime tuning and bootless web flashing"
