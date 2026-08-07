@@ -25,6 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p tools
           python - <<'PY'
           import base64, gzip, re
           from pathlib import Path
@@ -32,14 +33,15 @@ jobs:
           match = re.search(r'payload = """([A-Za-z0-9+/=]+)"""', source)
           if not match:
               raise SystemExit('embedded patch payload not found')
-          Path('.agent_apply.py').write_bytes(gzip.decompress(base64.b64decode(match.group(1))))
+          Path('tools/.agent_apply.py').write_bytes(gzip.decompress(base64.b64decode(match.group(1))))
           PY
           set +e
-          output="$(python .agent_apply.py 2>&1)"
+          output="$(python tools/.agent_apply.py 2>&1)"
           rc=$?
           set -e
           printf '%s\n' "$output"
-          rm -f .agent_apply.py
+          rm -f tools/.agent_apply.py
+          rmdir tools 2>/dev/null || true
           if [ "$rc" -ne 0 ]; then
             printf '%s\n' "$output" | grep -Fq 'README.md: expected 1 occurrence, found 0' || exit "$rc"
             printf '%s\n' "$output" | grep -Fq 'core patch applied' || exit "$rc"
