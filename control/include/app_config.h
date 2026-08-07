@@ -27,18 +27,12 @@ constexpr bool kEnableIna226=true;
 constexpr uint32_t kGnssNavExpectedIntervalMs=100UL,kControlHeartbeatIntervalMs=100UL,kLinkFailSafeTimeoutMs=500UL;
 // Production linkage calibration. Normalized -1..+1 spans the usable mechanical range.
 constexpr uint8_t kCompetitionLeftChannel=0,kCompetitionRightChannel=1,kCompetitionRearChannel=2;
-constexpr float kServoReferenceAngleDeg=90.0f,kServoReferencePulseUs=1500.0f,kServoUsPerDegree=10.0f;
-constexpr float servoAngleToPulseUs(float angleDeg){return kServoReferencePulseUs+(angleDeg-kServoReferenceAngleDeg)*kServoUsPerDegree;}
-constexpr float kCompetitionLeftMinDeg=75.0f,kCompetitionLeftNeutralDeg=90.0f,kCompetitionLeftMaxDeg=105.0f;
-constexpr float kCompetitionRightMinDeg=75.0f,kCompetitionRightNeutralDeg=90.0f,kCompetitionRightMaxDeg=105.0f;
-constexpr float kCompetitionRearMinDeg=70.0f,kCompetitionRearNeutralDeg=90.0f,kCompetitionRearMaxDeg=110.0f;
-// Kept as front-wing PWM aliases for older diagnostics/tests.
-constexpr float kCompetitionServoMinUs=servoAngleToPulseUs(kCompetitionLeftMinDeg),kCompetitionServoNeutralUs=servoAngleToPulseUs(kCompetitionLeftNeutralDeg),kCompetitionServoMaxUs=servoAngleToPulseUs(kCompetitionLeftMaxDeg);
+constexpr float kCompetitionServoMinUs=1200.0f,kCompetitionServoNeutralUs=1500.0f,kCompetitionServoMaxUs=1800.0f;
 constexpr bool kCompetitionLeftReversed=false,kCompetitionRightReversed=false,kCompetitionRearReversed=false;
 constexpr float kCompetitionKpPitch=0.80f,kCompetitionKdPitch=0.10f,kCompetitionKpRoll=1.25f,kCompetitionKdRoll=0.22f,kCompetitionKpHeight=0.75f,kCompetitionKpYaw=0.90f,kCompetitionKdYaw=0.12f;
 constexpr float kCompetitionTargetHeightM=0.45f,kCompetitionAutoPropulsion=0.55f,kCompetitionWaypointReachM=1.5f,kCompetitionLosLookaheadM=4.0f;
-// The physical front-wing mapper itself is 75..105 deg, so auto control may use the full -1..+1 span.
-constexpr float kCompetitionAttitudeServoLimit=1.0f;
+// With the current +/-300 us calibrated range, 0.50 is approximately +/-15 deg.
+constexpr float kCompetitionAttitudeServoLimit=0.50f;
 // Ignore a one-frame attitude-servo jump larger than about 3 degrees. A
 // second 50 Hz frame in the same direction confirms it with only 20 ms delay.
 constexpr float kCompetitionServoSpikeThreshold=0.10f;

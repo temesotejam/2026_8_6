@@ -5,28 +5,116 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>水上翼船ファームウェア Web Installer</title>
-  <meta name="description" content="XIAO ESP32S3へBOOTボタンなしの通常書き込みを試みるWebインストーラー">
+  <meta name="description" content="2台のXIAO ESP32S3へ水上翼船ファームウェアを書き込むWebインストーラー">
   <link rel="stylesheet" href="./style.css">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
 </head>
 <body>
   <main class="shell">
-    <header class="hero"><span class="badge">XIAO ESP32S3 × 2</span><h1>水上翼船<br>Firmware Installer</h1><p class="lead">ESP32-S3のUSB Serial/JTAGリセットを明示的に使用し、通常はBOOTボタンを押さずに書き込みます。失敗時だけBOOT操作を復旧手段として使ってください。</p><p id="build-version" class="build-version">ビルド情報を確認中…</p></header>
-    <section class="card danger"><h2>書き込み前の安全確認</h2><ul><li>モータ用バッテリーとサーボ外部電源を切ってください。</li><li>2台を同時接続せず、書き込む基板だけをUSB接続してください。</li><li><strong>COM3は選択しないでください。</strong></li><li>他のシリアルモニタを閉じてください。</li></ul></section>
-    <section class="install-grid" aria-label="ファームウェア選択">
-      <article class="card installer control-card"><div class="card-heading"><span class="node-label">CONTROL NODE</span><h2>制御側 XIAO ESP32S3</h2></div><p>BNO08X、ToF、INA226、PCA9685、VESCと自動制御を担当します。</p><dl><div><dt>基板</dt><dd>Seeed Studio XIAO ESP32S3</dd></div><div><dt>Flash</dt><dd>8 MB</dd></div></dl><button class="install-button control-button direct-flash" data-bin="./firmware/boat-control-xiao-esp32s3.bin" data-label="制御側">BOOTなしで制御側へ書き込む</button></article>
-      <article class="card installer communication-card"><div class="card-heading"><span class="node-label">COMMUNICATION NODE</span><h2>通信側 XIAO ESP32S3</h2></div><p>GNSS、統合Web操作画面、制御側とのUART通信、microSD認識を担当します。</p><dl><div><dt>基板</dt><dd>Seeed Studio XIAO ESP32S3</dd></div><div><dt>Flash</dt><dd>8 MB</dd></div></dl><button class="install-button communication-button direct-flash" data-bin="./firmware/boat-communication-xiao-esp32s3.bin" data-label="通信側">BOOTなしで通信側へ書き込む</button></article>
+    <header class="hero">
+      <span class="badge">XIAO ESP32S3 × 2</span>
+      <h1>水上翼船<br>Firmware Installer</h1>
+      <p class="lead">開発環境を入れずに、PC版ChromeまたはEdgeから通信側・制御側ファームウェアをコンパイル済みの状態で書き込めます。</p>
+      <p id="build-version" class="build-version">ビルド情報を確認中…</p>
+    </header>
+
+    <section class="card danger">
+      <h2>書き込み前の安全確認</h2>
+      <ul>
+        <li>モータ用バッテリーとサーボ外部電源を切ってください。</li>
+        <li>2台を同時接続せず、書き込む基板だけをUSB接続してください。</li>
+        <li><strong>COM3は選択しないでください。</strong></li>
+        <li>書き込みにより、その基板に現在入っているファームウェアは置き換わります。</li>
+      </ul>
     </section>
-    <section class="card steps"><h2>書き込み状態</h2><p id="flash-status" class="note">対象のボタンを押し、表示されたシリアルポートからXIAOを選択してください。</p><progress id="flash-progress" max="100" value="0" style="width:100%;height:22px"></progress><pre id="flash-log" style="white-space:pre-wrap;max-height:220px;overflow:auto;font-size:12px"></pre></section>
-    <section class="card after-write"><h2>BOOTボタンが必要になる場合</h2><p>通常起動中のXIAOではUSB Serial/JTAGリセットを試します。それでも接続できない場合は、ファーム破損やUSB状態異常の可能性があります。そのときだけBOOTを押しながら再度書き込みを開始してください。</p><div class="safety-tags"><span>通常はBOOT不要</span><span>復旧時だけBOOT</span><span>DISARMED起動</span></div></section>
-    <footer><a href="https://github.com/temesotejam/2026_8_6">ソースコードとビルド履歴</a></footer>
+
+    <section class="install-grid" aria-label="ファームウェア選択">
+      <article class="card installer control-card">
+        <div class="card-heading">
+          <span class="node-label">CONTROL NODE</span>
+          <h2>制御側 XIAO ESP32S3</h2>
+        </div>
+        <p>BNO08X、ToF、INA226、PCA9685、VESCと自動制御を担当する制御側です。回転数はVESCのERPMを使用し、AS5600は使用しません。D10はモータ安全リレーで、非ゼロDuty指令中のみHIGHになります。</p>
+        <dl>
+          <div><dt>基板</dt><dd>Seeed Studio XIAO ESP32S3</dd></div>
+          <div><dt>通常のポート</dt><dd>COM4</dd></div>
+          <div><dt>Flash</dt><dd>8 MB</dd></div>
+        </dl>
+        <esp-web-install-button manifest="./manifest-control.json">
+          <button slot="activate" class="install-button control-button">XIAOへ書き込む</button>
+          <p slot="unsupported" class="unsupported">Web Serial非対応です。PC版ChromeまたはEdgeで開いてください。</p>
+          <p slot="not-allowed" class="unsupported">HTTPSの公開ページから開いてください。</p>
+        </esp-web-install-button>
+        <div class="downloads">
+          <a href="./firmware/boat-control-xiao-esp32s3.bin" download>BINを保存</a>
+          <a href="./firmware/boat-control-xiao-esp32s3.bin.sha256" download>SHA-256</a>
+        </div>
+      </article>
+
+      <article class="card installer communication-card">
+        <div class="card-heading">
+          <span class="node-label">COMMUNICATION NODE</span>
+          <h2>通信側 XIAO ESP32S3</h2>
+        </div>
+        <p>GNSS、固定ウェイポイント選択、統合Web操作画面、制御側とのUART通信を担当します。外付けmicroSDの認識確認に対応し、ログ記録はまだ無効です。</p>
+        <dl>
+          <div><dt>基板</dt><dd>Seeed Studio XIAO ESP32S3</dd></div>
+          <div><dt>通常のポート</dt><dd>COM6</dd></div>
+          <div><dt>Flash</dt><dd>8 MB</dd></div>
+        </dl>
+        <esp-web-install-button manifest="./manifest-communication.json">
+          <button slot="activate" class="install-button communication-button">通信側XIAOへ書き込む</button>
+          <p slot="unsupported" class="unsupported">Web Serial非対応です。PC版ChromeまたはEdgeで開いてください。</p>
+          <p slot="not-allowed" class="unsupported">HTTPSの公開ページから開いてください。</p>
+        </esp-web-install-button>
+        <div class="downloads">
+          <a href="./firmware/boat-communication-xiao-esp32s3.bin" download>BINを保存</a>
+          <a href="./firmware/boat-communication-xiao-esp32s3.bin.sha256" download>SHA-256</a>
+        </div>
+      </article>
+    </section>
+
+    <section class="card steps">
+      <h2>書き込み手順</h2>
+      <ol>
+        <li>上の安全確認を行い、対象基板だけをデータ通信対応USBケーブルで接続します。</li>
+        <li>対象基板の「書き込む」ボタンを押します。</li>
+        <li>表示された一覧から対象基板のシリアルポートを選びます。</li>
+        <li>Installを実行し、完了表示が出るまでUSBを抜かないでください。</li>
+        <li>もう一方へ書く場合は、完了後にUSBを差し替えて同じ手順を行います。</li>
+      </ol>
+      <p class="note">ポートが出ない場合はUSBケーブル、USBドライバ、他のシリアルモニタがポートを使用していないかを確認してください。</p>
+    </section>
+
+    <section class="card after-write">
+      <h2>書き込み後</h2>
+      <p>両方とも起動時はDISARMEDです。通信側XIAOのUSBシリアルまたはWeb画面で、GNSS・microSD・制御側UARTリンクを確認してからアクチュエータ電源を入れてください。</p>
+      <div class="safety-tags">
+        <span>DISARMED起動</span>
+        <span>停止時PCA9685 Full OFF</span>
+        <span>VESC Duty 0</span>
+      </div>
+    </section>
+
+    <footer>
+      <a href="https://github.com/temesotejam/2026_8_6">ソースコードとビルド履歴</a>
+    </footer>
   </main>
-  <script type="module">
-    import {ESPLoader,Transport,UsbJtagSerialReset} from "https://unpkg.com/esptool-js@0.6.0/lib/index.js?module";
-    const status=document.getElementById('flash-status'),progress=document.getElementById('flash-progress'),log=document.getElementById('flash-log');let busy=false;
-    function line(text){log.textContent+=(log.textContent?'\n':'')+text;log.scrollTop=log.scrollHeight}
-    async function flash(button){if(busy)return;if(!('serial' in navigator)){status.textContent='Web Serial非対応です。PC版ChromeまたはEdgeを使用してください。';return}busy=true;document.querySelectorAll('.direct-flash').forEach(b=>b.disabled=true);progress.value=0;log.textContent='';let transport=null;try{status.textContent='シリアルポートを選択してください…';const port=await navigator.serial.requestPort();transport=new Transport(port,true);const terminal={clean(){},write(data){line(String(data).trimEnd())},writeLine(data){line(String(data))}};const loader=new ESPLoader({transport,baudrate:115200,terminal,debugLogging:false,resetConstructors:{usbJTAGSerialReset:t=>new UsbJtagSerialReset(t)}});status.textContent='USB Serial/JTAGで自動リセットしています…';line('USB/JTAG reset -> ROM download mode');const chip=await loader.main('usb_reset');line('Detected: '+chip);if(!String(chip).toUpperCase().includes('ESP32-S3'))throw new Error('ESP32-S3ではないデバイスが選択されました: '+chip);status.textContent=button.dataset.label+'ファームウェアを取得しています…';const response=await fetch(button.dataset.bin,{cache:'no-store'});if(!response.ok)throw new Error('BIN取得失敗 HTTP '+response.status);const image=new Uint8Array(await response.arrayBuffer());status.textContent='書き込み中です。USBを抜かないでください…';await loader.writeFlash({fileArray:[{data:image,address:0}],flashMode:'dio',flashFreq:'80m',flashSize:'8MB',eraseAll:false,compress:true,reportProgress:(i,written,total)=>{const p=total?written*100/total:0;progress.value=p;status.textContent='書き込み中 '+p.toFixed(1)+'%'}});progress.value=100;status.textContent='書き込み完了。XIAOを再起動しています…';await loader.after('hard_reset');line('Flash completed.');status.textContent='完了しました。通常起動を確認してください。'}catch(error){console.error(error);line('ERROR: '+(error&&error.message?error.message:String(error)));status.textContent='自動書き込みに失敗しました。USBを挿し直して再試行し、それでも失敗する場合だけBOOTを押しながら開始してください。'}finally{if(transport){try{await transport.disconnect()}catch(error){}}busy=false;document.querySelectorAll('.direct-flash').forEach(b=>b.disabled=false)}}
-    document.querySelectorAll('.direct-flash').forEach(button=>button.addEventListener('click',()=>flash(button)));
-    fetch('./build-info.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error();return r.json()}).then(info=>{const shortCommit=info.shortCommit||String(info.commit||'').slice(0,7);document.getElementById('build-version').textContent=`公開ビルド: ${shortCommit} / Actions #${info.runNumber}`}).catch(()=>{document.getElementById('build-version').textContent='公開ビルド情報を取得できませんでした'});
+
+  <script>
+    fetch('./build-info.json', { cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) throw new Error('build info unavailable');
+        return response.json();
+      })
+      .then((info) => {
+        const shortCommit = info.shortCommit || String(info.commit || '').slice(0, 7);
+        document.getElementById('build-version').textContent =
+          `公開ビルド: ${shortCommit} / Actions #${info.runNumber}`;
+      })
+      .catch(() => {
+        document.getElementById('build-version').textContent = '公開ビルド情報を取得できませんでした';
+      });
   </script>
 </body>
 </html>

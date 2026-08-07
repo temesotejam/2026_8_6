@@ -49,55 +49,6 @@ void handleCompetitionCommand(const boat::Frame& frame){
   const auto result=competitionIngress.process(frame,competitionSafety(safety),competitionController,nowUs());
   if(result.ackGenerated)sendCompetitionIngressAck(result);
 }
-
-bool validRuntimeTuningValue(float value,float low,float high){return isfinite(value)&&value>=low&&value<=high;}
-bool validServoAngles(float minimum,float neutral,float maximum){
-  return validRuntimeTuningValue(minimum,0.0f,180.0f)&&validRuntimeTuningValue(neutral,0.0f,180.0f)&&
-         validRuntimeTuningValue(maximum,0.0f,180.0f)&&minimum<neutral&&neutral<maximum;
-}
-void sendRuntimeTuningAck(const boat::RuntimeTuningCommandPayload& request,uint8_t disposition,uint16_t reason,uint64_t receivedUs,uint64_t appliedUs){
-  boat::ControlCommandAckPayload ack{};ack.requestId=request.requestId;ack.commandSequence=request.commandSequence;
-  ack.commandType=static_cast<uint8_t>(boat::Type::RuntimeTuning);ack.disposition=disposition;
-  ack.safetyState=static_cast<uint8_t>(safety);ack.controlMode=static_cast<uint8_t>(competitionController.mode());
-  ack.reason=reason;ack.receivedUs=receivedUs;ack.appliedUs=appliedUs;
-  ack.canonicalCrc=boat::canonicalCrc(&ack,offsetof(boat::ControlCommandAckPayload,canonicalCrc));
-  linkSend(boat::Type::ControlCommandAck,reinterpret_cast<uint8_t*>(&ack),sizeof(ack));
-}
-void handleRuntimeTuning(const boat::Frame& frame){
-  enum : uint16_t { None=0,Safety=1,Crc=2,Type=3,Range=4,Protocol=6 };
-  boat::RuntimeTuningCommandPayload request{};const uint64_t receivedUs=nowUs();
-  if(frame.header.length!=sizeof(request)){sendRuntimeTuningAck(request,1,Type,receivedUs,0);return;}
-  memcpy(&request,frame.payload,sizeof(request));
-  if(request.protocolVersion!=boat::kVersion){sendRuntimeTuningAck(request,1,Protocol,receivedUs,0);return;}
-  if(request.canonicalCrc!=boat::canonicalCrc(&request,offsetof(boat::RuntimeTuningCommandPayload,canonicalCrc))){sendRuntimeTuningAck(request,1,Crc,receivedUs,0);return;}
-  if(safety!=SafetyState::DISARMED){sendRuntimeTuningAck(request,1,Safety,receivedUs,0);return;}
-  const bool gainsOk=validRuntimeTuningValue(request.kpPitch,0.0f,10.0f)&&validRuntimeTuningValue(request.kdPitch,0.0f,5.0f)&&
-      validRuntimeTuningValue(request.kpRoll,0.0f,10.0f)&&validRuntimeTuningValue(request.kdRoll,0.0f,5.0f)&&
-      validRuntimeTuningValue(request.kpHeight,0.0f,10.0f)&&validRuntimeTuningValue(request.kpYaw,0.0f,10.0f)&&
-      validRuntimeTuningValue(request.kdYaw,0.0f,5.0f)&&validRuntimeTuningValue(request.targetHeightM,0.10f,2.00f);
-  const bool anglesOk=validServoAngles(request.leftMinDeg,request.leftNeutralDeg,request.leftMaxDeg)&&
-      validServoAngles(request.rightMinDeg,request.rightNeutralDeg,request.rightMaxDeg)&&
-      validServoAngles(request.rearMinDeg,request.rearNeutralDeg,request.rearMaxDeg);
-  const production_control::ServoTuning left(servoAngleToPulseUs(request.leftMinDeg),servoAngleToPulseUs(request.leftNeutralDeg),servoAngleToPulseUs(request.leftMaxDeg),kCompetitionLeftReversed);
-  const production_control::ServoTuning right(servoAngleToPulseUs(request.rightMinDeg),servoAngleToPulseUs(request.rightNeutralDeg),servoAngleToPulseUs(request.rightMaxDeg),kCompetitionRightReversed);
-  const production_control::ServoTuning rear(servoAngleToPulseUs(request.rearMinDeg),servoAngleToPulseUs(request.rearNeutralDeg),servoAngleToPulseUs(request.rearMaxDeg),kCompetitionRearReversed);
-  if(!gainsOk||!anglesOk||!production_control::ServoMapper::valid(left)||!production_control::ServoMapper::valid(right)||!production_control::ServoMapper::valid(rear)){
-    sendRuntimeTuningAck(request,1,Range,receivedUs,0);return;
-  }
-  safeOutputs();
-  competitionLeftServo.setTuning(left);competitionRightServo.setTuning(right);competitionRearServo.setTuning(rear);
-  production_control::Config config=competitionController.config();
-  config.kpPitch=request.kpPitch;config.kdPitch=request.kdPitch;config.kpRoll=request.kpRoll;config.kdRoll=request.kdRoll;
-  config.kpHeight=request.kpHeight;config.kpYaw=request.kpYaw;config.kdYaw=request.kdYaw;config.targetHeightM=request.targetHeightM;
-  config.attitudeServoLimit=1.0f;competitionController.setConfig(config);
-  runtimeTuning.kpPitch=request.kpPitch;runtimeTuning.kdPitch=request.kdPitch;runtimeTuning.kpRoll=request.kpRoll;runtimeTuning.kdRoll=request.kdRoll;
-  runtimeTuning.kpHeight=request.kpHeight;runtimeTuning.kpYaw=request.kpYaw;runtimeTuning.kdYaw=request.kdYaw;runtimeTuning.targetHeightM=request.targetHeightM;
-  runtimeTuning.leftMinDeg=request.leftMinDeg;runtimeTuning.leftNeutralDeg=request.leftNeutralDeg;runtimeTuning.leftMaxDeg=request.leftMaxDeg;
-  runtimeTuning.rightMinDeg=request.rightMinDeg;runtimeTuning.rightNeutralDeg=request.rightNeutralDeg;runtimeTuning.rightMaxDeg=request.rightMaxDeg;
-  runtimeTuning.rearMinDeg=request.rearMinDeg;runtimeTuning.rearNeutralDeg=request.rearNeutralDeg;runtimeTuning.rearMaxDeg=request.rearMaxDeg;
-  latchedCompetitionReason=production_control::StopReason::None;
-  sendRuntimeTuningAck(request,0,None,receivedUs,nowUs());
-}
 void printCompetitionCommandDiag(){
   const auto& metrics=competitionIngress.metrics();
   Serial.printf("COMPETITION_CMD applied=%lu rejected=%lu duplicate=%lu malformed=%lu pwm_writes=%lu pwm_errors=%lu\n",
@@ -120,7 +71,7 @@ bool productionPreflightReady(){
   const bool manualOk=waypointMode||
                       (competitionController.manualReceivedUs()&&now-competitionController.manualReceivedUs()<=500000ULL);
   const bool actuatorConfigOk=kCompetitionLeftChannel!=kCompetitionRightChannel&&kCompetitionLeftChannel!=kCompetitionRearChannel&&kCompetitionRightChannel!=kCompetitionRearChannel&&
-                              competitionLeftServo.validConfiguration()&&competitionRightServo.validConfiguration()&&competitionRearServo.validConfiguration();
+                              kCompetitionServoMinUs<kCompetitionServoNeutralUs&&kCompetitionServoNeutralUs<kCompetitionServoMaxUs;
   const bool baseOk=pcaReady&&linkOk&&manualOk&&actuatorConfigOk;
   if(mode==production_control::ControlMode::Manual)return baseOk&&competitionController.manualOutputMask()!=0;
   if(mode==production_control::ControlMode::AttitudeAssist||mode==production_control::ControlMode::HeadingHold)return baseOk&&imuOk;
@@ -169,7 +120,7 @@ void sendProductionTelemetry(const boat::EstimatedStatePayload& estimated,const 
   if(competitionOutput.reason==production_control::StopReason::None)competitionOutput.reason=latchedCompetitionReason;
   boat::ControlOutputPayload output{};output.timestampUs=now;output.leftFrontWing=competitionOutput.leftFront;output.rightFrontWing=competitionOutput.rightFront;output.rearYaw=competitionOutput.rearYaw;output.propulsion=competitionOutput.propulsion;output.leftPrelimit=competitionOutput.leftPrelimit;output.rightPrelimit=competitionOutput.rightPrelimit;output.rearYawPrelimit=competitionOutput.rearPrelimit;output.propulsionPrelimit=competitionOutput.propulsionPrelimit;output.uHeight=competitionOutput.uHeight;output.uPitch=competitionOutput.uPitch;output.uRoll=competitionOutput.uRoll;output.targetCourseRad=competitionOutput.targetYaw;output.courseErrorRad=competitionOutput.courseErrorRad;output.waypointDistanceM=competitionOutput.waypointDistanceM;output.waypointIndex=competitionOutput.activeWaypoint;output.safety=static_cast<uint8_t>(safety);output.stopReason=static_cast<uint8_t>(competitionOutput.reason);output.reservedControl=competitionOutput.enabledMask;output.valid=competitionOutput.physicalGate?1:0;
   linkSend(boat::Type::ControlOutput,reinterpret_cast<uint8_t*>(&output),sizeof(output));
-  boat::ControlSnapshotPayload snapshot{};snapshot.timestampUs=now;snapshot.cycle=competitionPwmWrites/3;snapshot.waypointRevision=waypointRevision;snapshot.gnssAgeUs=controlAge(input.gnssUs,now);snapshot.imuAgeUs=controlAge(input.imuUs,now);snapshot.tofAgeUs=controlAge(input.tofUs,now);snapshot.latitudeDeg=navigation.latitudeDeg;snapshot.longitudeDeg=navigation.longitudeDeg;snapshot.speedMps=navigation.speedMps;snapshot.gnssCourseRad=navigation.courseRad;snapshot.localNorthM=navNorthM;snapshot.localEastM=navEastM;snapshot.rollRad=estimated.rollRad;snapshot.pitchRad=estimated.pitchRad;snapshot.yawRad=estimated.yawRad;snapshot.rollRateRadS=estimated.rollRateRadS;snapshot.pitchRateRadS=estimated.pitchRateRadS;snapshot.yawRateRadS=estimated.yawRateRadS;snapshot.tofFilteredM=estimated.waterDistanceM;snapshot.heightErrorM=runtimeTuning.targetHeightM-estimated.waterDistanceM;snapshot.uHeight=competitionOutput.uHeight;snapshot.uPitch=competitionOutput.uPitch;snapshot.uRoll=competitionOutput.uRoll;snapshot.uYaw=competitionOutput.uYaw;snapshot.frontCommon=competitionOutput.uHeight+competitionOutput.uPitch;snapshot.frontDifferential=competitionOutput.uRoll;snapshot.leftFrontWing=competitionOutput.leftFront;snapshot.rightFrontWing=competitionOutput.rightFront;snapshot.rearYaw=competitionOutput.rearYaw;snapshot.propulsion=competitionOutput.propulsion;snapshot.leftPrelimit=competitionOutput.leftPrelimit;snapshot.rightPrelimit=competitionOutput.rightPrelimit;snapshot.rearYawPrelimit=competitionOutput.rearPrelimit;snapshot.propulsionPrelimit=competitionOutput.propulsionPrelimit;snapshot.gnssValid=input.gnssValid;snapshot.imuValid=input.imuValid;snapshot.tofValid=input.tofValid;snapshot.heightValid=input.tofValid;snapshot.waypointReached=competitionOutput.waypointReached;snapshot.outputValid=competitionOutput.physicalGate;snapshot.state=static_cast<uint8_t>(safety);snapshot.safetyReason=static_cast<uint8_t>(competitionOutput.reason);snapshot.mode=static_cast<uint8_t>(competitionController.mode());snapshot.activeWaypoint=competitionOutput.activeWaypoint;snapshot.targetBearingRad=competitionOutput.targetYaw;snapshot.courseErrorRad=competitionOutput.courseErrorRad;snapshot.waypointDistanceM=competitionOutput.waypointDistanceM;
+  boat::ControlSnapshotPayload snapshot{};snapshot.timestampUs=now;snapshot.cycle=competitionPwmWrites/3;snapshot.waypointRevision=waypointRevision;snapshot.gnssAgeUs=controlAge(input.gnssUs,now);snapshot.imuAgeUs=controlAge(input.imuUs,now);snapshot.tofAgeUs=controlAge(input.tofUs,now);snapshot.latitudeDeg=navigation.latitudeDeg;snapshot.longitudeDeg=navigation.longitudeDeg;snapshot.speedMps=navigation.speedMps;snapshot.gnssCourseRad=navigation.courseRad;snapshot.localNorthM=navNorthM;snapshot.localEastM=navEastM;snapshot.rollRad=estimated.rollRad;snapshot.pitchRad=estimated.pitchRad;snapshot.yawRad=estimated.yawRad;snapshot.rollRateRadS=estimated.rollRateRadS;snapshot.pitchRateRadS=estimated.pitchRateRadS;snapshot.yawRateRadS=estimated.yawRateRadS;snapshot.tofFilteredM=estimated.waterDistanceM;snapshot.heightErrorM=kCompetitionTargetHeightM-estimated.waterDistanceM;snapshot.uHeight=competitionOutput.uHeight;snapshot.uPitch=competitionOutput.uPitch;snapshot.uRoll=competitionOutput.uRoll;snapshot.uYaw=competitionOutput.uYaw;snapshot.frontCommon=competitionOutput.uHeight+competitionOutput.uPitch;snapshot.frontDifferential=competitionOutput.uRoll;snapshot.leftFrontWing=competitionOutput.leftFront;snapshot.rightFrontWing=competitionOutput.rightFront;snapshot.rearYaw=competitionOutput.rearYaw;snapshot.propulsion=competitionOutput.propulsion;snapshot.leftPrelimit=competitionOutput.leftPrelimit;snapshot.rightPrelimit=competitionOutput.rightPrelimit;snapshot.rearYawPrelimit=competitionOutput.rearPrelimit;snapshot.propulsionPrelimit=competitionOutput.propulsionPrelimit;snapshot.gnssValid=input.gnssValid;snapshot.imuValid=input.imuValid;snapshot.tofValid=input.tofValid;snapshot.heightValid=input.tofValid;snapshot.waypointReached=competitionOutput.waypointReached;snapshot.outputValid=competitionOutput.physicalGate;snapshot.state=static_cast<uint8_t>(safety);snapshot.safetyReason=static_cast<uint8_t>(competitionOutput.reason);snapshot.mode=static_cast<uint8_t>(competitionController.mode());snapshot.activeWaypoint=competitionOutput.activeWaypoint;snapshot.targetBearingRad=competitionOutput.targetYaw;snapshot.courseErrorRad=competitionOutput.courseErrorRad;snapshot.waypointDistanceM=competitionOutput.waypointDistanceM;
   if(waypointGeoCount&&competitionOutput.activeWaypoint<waypointGeoCount){snapshot.targetWaypointLatitudeDeg=waypointGeo[competitionOutput.activeWaypoint].latitudeDeg;snapshot.targetWaypointLongitudeDeg=waypointGeo[competitionOutput.activeWaypoint].longitudeDeg;}
   linkSend(boat::Type::ControlSnapshot,reinterpret_cast<uint8_t*>(&snapshot),sizeof(snapshot));
   boat::InaStatusPayload power{};power.timestampUs=lastInaUs;power.ageUs=controlAge(lastInaUs,now);power.busVoltageV=latestIna.busV;power.shuntVoltageV=latestIna.shuntV;power.currentA=latestIna.currentRegA;power.powerW=latestIna.powerRegW;power.valid=latestIna.valid;power.errorCode=latestIna.valid?0:1;linkSend(boat::Type::InaStatus,reinterpret_cast<uint8_t*>(&power),sizeof(power));
@@ -208,7 +159,6 @@ void linkRxService(){
     else if(type==boat::Type::GnssNavV2&&frame.header.length==sizeof(boat::GnssNavV2Payload)){
       boat::GnssNavV2Payload source{};memcpy(&source,frame.payload,sizeof(source));boat::GnssNavPayload nav{};nav.navSequence=source.navSequence;nav.fixSequence=source.fixSequence;nav.flags=source.flags;nav.utcCentiseconds=source.utcCentiseconds;nav.latitudeE7=source.latitudeE7;nav.longitudeE7=source.longitudeE7;nav.altitudeMm=source.altitudeMm;nav.speedMmPerSec=source.speedMmPerSec;nav.courseE5Deg=source.courseE5Deg;nav.hdopCenti=source.hdopCenti;nav.satellites=source.satellites;nav.fixType=source.fixType;nav.generatedUs=source.generatedUs;nav.canonicalCrc=boat::canonicalCrc(&nav,offsetof(boat::GnssNavPayload,canonicalCrc));boat::Frame legacy{};legacy.header.length=sizeof(nav);memcpy(legacy.payload,&nav,sizeof(nav));++gnssNavRx;processNav(legacy);
     }else if(type==boat::Type::WaypointSet)handleWaypointSet(frame);
-    else if(type==boat::Type::RuntimeTuning)handleRuntimeTuning(frame);
     else if(type==boat::Type::ControlModeCommand||type==boat::Type::ManualCommand||type==boat::Type::HeadingTarget)handleCompetitionCommand(frame);
     else if(type==boat::Type::TimeSyncRequest&&frame.header.length==sizeof(boat::TimeSyncRequestPayload)){boat::TimeSyncRequestPayload request{};memcpy(&request,frame.payload,sizeof(request));boat::TimeSyncReplyPayload reply{request.sequence,request.t1Us,nowUs(),nowUs()};linkSend(boat::Type::TimeSyncReply,reinterpret_cast<uint8_t*>(&reply),sizeof(reply));}
     else if(type==boat::Type::Arm){const bool ok=safety==SafetyState::DISARMED&&productionPreflightReady();if(ok){latchedCompetitionReason=production_control::StopReason::None;setState(SafetyState::ARMED_IDLE);}sendCommandAck(frame,ok?0:1,ok?0:1);}
