@@ -114,6 +114,7 @@ class Controller {
   CommandResult setWaypointReachRadius(float radiusM,AuthoritativeSafety safety);
   Output step(const SensorInput& input);
   ControlMode mode() const { return mode_; }
+  const Config& config() const { return config_; }
   uint64_t manualReceivedUs() const { return manualReceivedUs_; }
   uint8_t manualOutputMask() const { return manual_.enabledMask; }
   uint8_t waypointCount() const { return waypointCount_; }
