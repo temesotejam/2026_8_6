@@ -5,7 +5,7 @@ namespace production_control {
 inline bool motorRelayRequired(float duty){return std::isfinite(duty)&&std::fabs(duty)>0.0f;}
 struct ServoTuning { float minUs,neutralUs,maxUs; bool reversed; constexpr ServoTuning(float min=1480.0f,float neutral=1500.0f,float max=1520.0f,bool reverse=false):minUs(min),neutralUs(neutral),maxUs(max),reversed(reverse){} };
 struct ServoResult { uint16_t pulseUs=1500; bool clamped=false,finite=true; };
-class ServoMapper { public: explicit ServoMapper(const ServoTuning& tuning=ServoTuning{}); void reset(); ServoResult map(float normalized); uint16_t previousPulseUs()const{return previousUs_;} static bool valid(const ServoTuning& tuning); private: ServoTuning tuning_{}; uint16_t previousUs_=1500; };
+class ServoMapper { public: explicit ServoMapper(const ServoTuning& tuning=ServoTuning{}); void reset(); ServoResult map(float normalized); bool setTuning(const ServoTuning& tuning); const ServoTuning& tuning()const{return tuning_;} bool validConfiguration()const{return valid(tuning_);} uint16_t previousPulseUs()const{return previousUs_;} static bool valid(const ServoTuning& tuning); private: ServoTuning tuning_{}; uint16_t previousUs_=1500; };
 class ServoSpikeFilter {
  public:
   explicit ServoSpikeFilter(float threshold=.10f);

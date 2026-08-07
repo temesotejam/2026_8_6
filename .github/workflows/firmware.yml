@@ -149,7 +149,7 @@ jobs:
 
           python "${ESPTOOL}" --chip esp32s3 merge_bin \
             -o site/firmware/boat-control-xiao-esp32s3.bin \
-            --flash_mode qio \
+            --flash_mode dio \
             --flash_freq 80m \
             --flash_size 8MB \
             0x0 "${CONTROL_BUILD}/bootloader.bin" \
@@ -159,7 +159,7 @@ jobs:
 
           python "${ESPTOOL}" --chip esp32s3 merge_bin \
             -o site/firmware/boat-communication-xiao-esp32s3.bin \
-            --flash_mode qio \
+            --flash_mode dio \
             --flash_freq 80m \
             --flash_size 8MB \
             0x0 "${COMMUNICATION_BUILD}/bootloader.bin" \

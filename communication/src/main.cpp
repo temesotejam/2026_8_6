@@ -37,6 +37,7 @@ constexpr size_t kRxChunkBytes = 512;
 enum class Stage : uint8_t {
   Idle,
   EnsureDisarmed,
+  WaitTuningAck,
   WaitWaypointAck,
   WaitModeAck,
   WaitManualAck,
@@ -99,6 +100,14 @@ struct OperationConfig {
   uint8_t mode = boat::ControlManual;
 };
 
+struct RuntimeTuningValues {
+  float kpPitch=0.80f,kdPitch=0.10f,kpRoll=1.25f,kdRoll=0.22f;
+  float kpHeight=0.75f,kpYaw=0.90f,kdYaw=0.12f,targetHeightM=0.45f;
+  float leftMinDeg=75.0f,leftNeutralDeg=90.0f,leftMaxDeg=105.0f;
+  float rightMinDeg=75.0f,rightNeutralDeg=90.0f,rightMaxDeg=105.0f;
+  float rearMinDeg=70.0f,rearNeutralDeg=90.0f,rearMaxDeg=110.0f;
+};
+
 HardwareSerial controlUart(1), gnssUart(2);
 gnss::Receiver gnssRx;
 WebServer web(kHttpPort);
@@ -133,6 +142,8 @@ PendingCommand pending{};
 uint32_t stageStartedMs = 0;
 ManualValues manualValues{};
 OperationConfig operation{};
+RuntimeTuningValues runtimeTuning{};
+bool tuningOnlyPending=false;
 char operationMessage[96] = "停止中です。";
 
 uint64_t nowUs() { return static_cast<uint64_t>(esp_timer_get_time()); }
@@ -147,6 +158,7 @@ const char* stageName(Stage value) {
   switch (value) {
     case Stage::Idle: return "idle";
     case Stage::EnsureDisarmed: return "ensure_disarmed";
+    case Stage::WaitTuningAck: return "wait_tuning_ack";
     case Stage::WaitWaypointAck: return "wait_waypoint_ack";
     case Stage::WaitModeAck: return "wait_mode_ack";
     case Stage::WaitManualAck: return "wait_manual_ack";
@@ -423,6 +435,22 @@ void beginManualCommand() {
                command.requestId, command.commandSequence);
 }
 
+boat::RuntimeTuningCommandPayload makeTuningCommand(const RuntimeTuningValues& values) {
+  boat::RuntimeTuningCommandPayload command{};
+  command.protocolVersion=boat::kVersion;command.requestId=requestIdNext++;command.commandSequence=commandSequenceNext++;command.sourceUs=nowUs();
+  command.kpPitch=values.kpPitch;command.kdPitch=values.kdPitch;command.kpRoll=values.kpRoll;command.kdRoll=values.kdRoll;
+  command.kpHeight=values.kpHeight;command.kpYaw=values.kpYaw;command.kdYaw=values.kdYaw;command.targetHeightM=values.targetHeightM;
+  command.leftMinDeg=values.leftMinDeg;command.leftNeutralDeg=values.leftNeutralDeg;command.leftMaxDeg=values.leftMaxDeg;
+  command.rightMinDeg=values.rightMinDeg;command.rightNeutralDeg=values.rightNeutralDeg;command.rightMaxDeg=values.rightMaxDeg;
+  command.rearMinDeg=values.rearMinDeg;command.rearNeutralDeg=values.rearNeutralDeg;command.rearMaxDeg=values.rearMaxDeg;
+  command.canonicalCrc=boat::canonicalCrc(&command,offsetof(boat::RuntimeTuningCommandPayload,canonicalCrc));
+  return command;
+}
+void beginTuningCommand() {
+  const boat::RuntimeTuningCommandPayload command=makeTuningCommand(runtimeTuning);
+  beginPending(boat::Type::RuntimeTuning,&command,sizeof(command),command.requestId,command.commandSequence);
+}
+
 void sendManualRefresh() {
   const boat::ManualCommandPayload command = makeManual(kAllManualMask, manualValues);
   if (sendFrame(boat::Type::ManualCommand, &command, sizeof(command))) {
@@ -545,13 +573,8 @@ void serviceOperation() {
       if (safety == 4) {
         failOperation("緊急停止中です。解除してから開始してください。");
       } else if (safety == 1) {
-        if (usesWaypoint()) {
-          beginWaypointCommand();
-          setStage(Stage::WaitWaypointAck, "固定ウェイポイントをXIAOへ設定しています。");
-        } else {
-          beginModeCommand();
-          setStage(Stage::WaitModeAck, "制御モードを設定しています。");
-        }
+        beginTuningCommand();
+        setStage(Stage::WaitTuningAck, "制御ゲイン・高さ・サーボ角をXIAOへ設定しています。");
       } else if (!lastSafetyMs || current - lastSafetyMs >= kSafetyRetryMs) {
         sendSafety(boat::Type::Stop);
         if (current - stageStartedMs > kSafetyTimeoutMs) {
@@ -559,6 +582,16 @@ void serviceOperation() {
         }
       }
       return;
+
+    case Stage::WaitTuningAck: {
+      const int result=servicePending(cache);
+      if(result>0){
+        if(tuningOnlyPending){tuningOnlyPending=false;setStage(Stage::Idle,"調整値をXIAOへ適用しました。");}
+        else if(usesWaypoint()){beginWaypointCommand();setStage(Stage::WaitWaypointAck,"固定ウェイポイントをXIAOへ設定しています。");}
+        else {beginModeCommand();setStage(Stage::WaitModeAck,"制御モードを設定しています。");}
+      }else if(result<0){tuningOnlyPending=false;failOperation(operationMessage);}
+      return;
+    }
 
     case Stage::WaitWaypointAck: {
       const int result = servicePending(cache);
@@ -791,11 +824,56 @@ bool parseOperationConfig(OperationConfig& config) {
   return true;
 }
 
+bool validRange(float value,float low,float high){return isfinite(value)&&value>=low&&value<=high;}
+bool validAngleTriplet(float minimum,float neutral,float maximum){
+  return validRange(minimum,0.0f,180.0f)&&validRange(neutral,0.0f,180.0f)&&validRange(maximum,0.0f,180.0f)&&minimum<neutral&&neutral<maximum;
+}
+bool parseRuntimeTuning(RuntimeTuningValues& v){
+  if(!parseFloatArgument("kp_pitch",v.kpPitch)||!parseFloatArgument("kd_pitch",v.kdPitch)||
+     !parseFloatArgument("kp_roll",v.kpRoll)||!parseFloatArgument("kd_roll",v.kdRoll)||
+     !parseFloatArgument("kp_height",v.kpHeight)||!parseFloatArgument("kp_yaw",v.kpYaw)||
+     !parseFloatArgument("kd_yaw",v.kdYaw)||!parseFloatArgument("target_height",v.targetHeightM)||
+     !parseFloatArgument("left_min",v.leftMinDeg)||!parseFloatArgument("left_neutral",v.leftNeutralDeg)||!parseFloatArgument("left_max",v.leftMaxDeg)||
+     !parseFloatArgument("right_min",v.rightMinDeg)||!parseFloatArgument("right_neutral",v.rightNeutralDeg)||!parseFloatArgument("right_max",v.rightMaxDeg)||
+     !parseFloatArgument("rear_min",v.rearMinDeg)||!parseFloatArgument("rear_neutral",v.rearNeutralDeg)||!parseFloatArgument("rear_max",v.rearMaxDeg))return false;
+  return validRange(v.kpPitch,0.0f,10.0f)&&validRange(v.kdPitch,0.0f,5.0f)&&validRange(v.kpRoll,0.0f,10.0f)&&
+         validRange(v.kdRoll,0.0f,5.0f)&&validRange(v.kpHeight,0.0f,10.0f)&&validRange(v.kpYaw,0.0f,10.0f)&&validRange(v.kdYaw,0.0f,5.0f)&&
+         validRange(v.targetHeightM,0.10f,2.00f)&&validAngleTriplet(v.leftMinDeg,v.leftNeutralDeg,v.leftMaxDeg)&&
+         validAngleTriplet(v.rightMinDeg,v.rightNeutralDeg,v.rightMaxDeg)&&validAngleTriplet(v.rearMinDeg,v.rearNeutralDeg,v.rearMaxDeg);
+}
+
 void sendJsonResult(int code, bool accepted, const char* message) {
   char body[180];
   snprintf(body, sizeof(body), "{\"accepted\":%s,\"message\":\"%s\"}",
            accepted ? "true" : "false", message);
   web.send(code, "application/json; charset=utf-8", body);
+}
+
+void apiTuningGet(){
+  char body[900];
+  snprintf(body,sizeof(body),
+    "{\"kp_pitch\":%.4f,\"kd_pitch\":%.4f,\"kp_roll\":%.4f,\"kd_roll\":%.4f,"
+    "\"kp_height\":%.4f,\"kp_yaw\":%.4f,\"kd_yaw\":%.4f,\"target_height\":%.4f,"
+    "\"left\":{\"min\":%.2f,\"neutral\":%.2f,\"max\":%.2f},"
+    "\"right\":{\"min\":%.2f,\"neutral\":%.2f,\"max\":%.2f},"
+    "\"rear\":{\"min\":%.2f,\"neutral\":%.2f,\"max\":%.2f},\"persistent\":false}",
+    runtimeTuning.kpPitch,runtimeTuning.kdPitch,runtimeTuning.kpRoll,runtimeTuning.kdRoll,
+    runtimeTuning.kpHeight,runtimeTuning.kpYaw,runtimeTuning.kdYaw,runtimeTuning.targetHeightM,
+    runtimeTuning.leftMinDeg,runtimeTuning.leftNeutralDeg,runtimeTuning.leftMaxDeg,
+    runtimeTuning.rightMinDeg,runtimeTuning.rightNeutralDeg,runtimeTuning.rightMaxDeg,
+    runtimeTuning.rearMinDeg,runtimeTuning.rearNeutralDeg,runtimeTuning.rearMaxDeg);
+  web.send(200,"application/json; charset=utf-8",body);
+}
+void apiTuningPost(){
+  RuntimeTuningValues requested{};
+  if(!parseRuntimeTuning(requested)){sendJsonResult(400,false,"調整値が範囲外、または最小＜中立＜最大になっていません。");return;}
+  const LinkCache cache=cacheSnapshot();
+  if(!linkConnected(cache)){sendJsonResult(503,false,"XIAOと通信できていません。");return;}
+  if(stage!=Stage::Idle&&stage!=Stage::Error){sendJsonResult(409,false,"停止中だけ調整値を変更できます。");return;}
+  if(currentSafety(cache)!=1){sendJsonResult(409,false,"制御側XIAOをDISARMEDにしてから変更してください。");return;}
+  runtimeTuning=requested;tuningOnlyPending=true;pending.active=false;beginTuningCommand();
+  setStage(Stage::WaitTuningAck,"調整値をXIAOへ適用しています。");
+  sendJsonResult(202,true,"調整値を送信しました。XIAOのACKを確認します。");
 }
 
 void apiStart() {
@@ -837,6 +915,7 @@ void apiStart() {
   }
   manualValues = values;
   operation = requested;
+  tuningOnlyPending = false;
   pending.active = false;
   lastManualMs = 0;
   portENTER_CRITICAL(&cacheMux);
@@ -976,6 +1055,8 @@ void startWeb() {
   WiFi.softAP(kApSsid, kApPassword);
   web.on("/", HTTP_GET, [] { web.send(200, "text/html; charset=utf-8", productionPageJapanese); });
   web.on("/api/status", HTTP_GET, apiStatus);
+  web.on("/api/tuning", HTTP_GET, apiTuningGet);
+  web.on("/api/tuning", HTTP_POST, apiTuningPost);
   web.on("/api/start", HTTP_POST, apiStart);
   web.on("/api/value", HTTP_POST, apiValue);
   web.on("/api/stop", HTTP_POST, apiStop);
